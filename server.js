@@ -23,11 +23,8 @@ pool.connect((err, client, release) => {
 });
 
 // Allow requests from your TopHost domain
-app.use(cors({
-  origin: ['https://arisan.gr', 'http://localhost:3000'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
-}));
+// Replace the existing app.use(cors(...)) with this simpler version:
+app.use(cors());
 
 app.use(express.json());
 
