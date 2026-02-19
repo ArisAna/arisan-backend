@@ -109,11 +109,32 @@ app.post('/api/init-users', async (req, res) => {
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
         display_name VARCHAR(100) NOT NULL,
+        is_admin BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)');
     res.json({ success: true, message: 'Users table initialized' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Bootstrap: set first user as admin (one-time setup)
+app.post('/api/bootstrap-admin', async (req, res) => {
+  try {
+    const admins = await pool.query('SELECT id FROM users WHERE is_admin = true');
+    if (admins.rows.length > 0) {
+      return res.json({ success: false, message: 'Admin already exists' });
+    }
+    const result = await pool.query(
+      'UPDATE users SET is_admin = true WHERE id = (SELECT id FROM users ORDER BY id LIMIT 1) RETURNING id, email, display_name'
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No users found' });
+    }
+    res.json({ success: true, message: 'First user set as admin', user: result.rows[0] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
