@@ -42,13 +42,13 @@ module.exports = function (pool) {
 
       const password_hash = await bcrypt.hash(password, 10);
       const result = await pool.query(
-        'INSERT INTO users (email, password_hash, display_name) VALUES ($1, $2, $3) RETURNING id, email, display_name, created_at',
+        'INSERT INTO users (email, password_hash, display_name) VALUES ($1, $2, $3) RETURNING id, email, display_name, is_admin, created_at',
         [email.toLowerCase(), password_hash, display_name]
       );
 
       const user = result.rows[0];
       const token = jwt.sign(
-        { id: user.id, email: user.email, display_name: user.display_name },
+        { id: user.id, email: user.email, display_name: user.display_name, is_admin: user.is_admin },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
       );
@@ -56,7 +56,7 @@ module.exports = function (pool) {
       res.status(201).json({
         success: true,
         token,
-        user: { id: user.id, email: user.email, display_name: user.display_name },
+        user: { id: user.id, email: user.email, display_name: user.display_name, is_admin: user.is_admin },
       });
     } catch (err) {
       console.error('Register error:', err);
@@ -77,7 +77,7 @@ module.exports = function (pool) {
 
     try {
       const result = await pool.query(
-        'SELECT id, email, password_hash, display_name FROM users WHERE email = $1',
+        'SELECT id, email, password_hash, display_name, is_admin FROM users WHERE email = $1',
         [email.toLowerCase()]
       );
 
@@ -99,7 +99,7 @@ module.exports = function (pool) {
       }
 
       const token = jwt.sign(
-        { id: user.id, email: user.email, display_name: user.display_name },
+        { id: user.id, email: user.email, display_name: user.display_name, is_admin: user.is_admin },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
       );
@@ -107,7 +107,7 @@ module.exports = function (pool) {
       res.json({
         success: true,
         token,
-        user: { id: user.id, email: user.email, display_name: user.display_name },
+        user: { id: user.id, email: user.email, display_name: user.display_name, is_admin: user.is_admin },
       });
     } catch (err) {
       console.error('Login error:', err);

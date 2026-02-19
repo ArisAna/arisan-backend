@@ -45,9 +45,16 @@ app.use(cors({
 
 app.use(express.json());
 
-// Auth routes
+// Routes
 const authRoutes = require('./routes/auth');
+const migrateRoutes = require('./routes/migrate');
+const questionRoutes = require('./routes/questions');
+const adminRoutes = require('./routes/admin');
+
 app.use('/api/auth', authRoutes(pool));
+app.use('/api/migrate', migrateRoutes(pool));
+app.use('/api/questions', questionRoutes(pool));
+app.use('/api/admin', adminRoutes(pool));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
