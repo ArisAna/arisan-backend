@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const router = express.Router();
 
@@ -18,75 +19,53 @@ const CATEGORIES = [
   'WTF Facts',
 ];
 
-// Seed sets - each call adds the next batch
-const SEED_SETS = [
-  // Set 1 (30 questions)
-  [
-    { question: "Ποιο ζώο δεν μπορεί να πηδήξει;", answer: "Ο ελέφαντας", category: "Ζώα & Φύση" },
-    { question: "Πόσα χρόνια κοιμάται μια γάτα στη ζωή της κατά μέσο όρο;", answer: "Περίπου 15 χρόνια (70% της ζωής της)", category: "Ζώα & Φύση" },
-    { question: "Ποια χώρα έχει περισσότερες πυραμίδες από την Αίγυπτο;", answer: "Το Σουδάν", category: "Γεωγραφία" },
-    { question: "Τι χρώμα είναι ο ιδρώτας του ιπποπόταμου;", answer: "Ροζ/κόκκινο", category: "Ζώα & Φύση" },
-    { question: "Ποιο είναι το εθνικό ζώο της Σκωτίας;", answer: "Ο μονόκερος", category: "Περίεργα Στατιστικά" },
-    { question: "Πόσο διαρκεί η μνήμη ενός χρυσόψαρου;", answer: "Τουλάχιστον 5 μήνες (όχι 3 δευτερόλεπτα!)", category: "Ζώα & Φύση" },
-    { question: "Ποιο φρούτο είναι τεχνικά μούρο: η φράουλα ή η μπανάνα;", answer: "Η μπανάνα", category: "Επιστήμη" },
-    { question: "Σε ποια χώρα βρίσκεται η μεγαλύτερη έρημος του κόσμου;", answer: "Ανταρκτική (η μεγαλύτερη έρημος δεν είναι η Σαχάρα!)", category: "Γεωγραφία" },
-    { question: "Πόσα στομάχια έχει μια αγελάδα;", answer: "4", category: "Ζώα & Φύση" },
-    { question: "Ποιος Έλληνας φιλόσοφος πέθανε κρατώντας την αναπνοή του;", answer: "Ο Διογένης (σύμφωνα με τον θρύλο)", category: "Ιστορία" },
-    { question: "Τι ποσοστό του DNA μας μοιραζόμαστε με τις μπανάνες;", answer: "Περίπου 60%", category: "Επιστήμη" },
-    { question: "Ποιο ήταν το αρχικό χρώμα των καρότων;", answer: "Μωβ", category: "Φαγητό & Ποτό" },
-    { question: "Πόσες φορές χτυπάει η καρδιά ενός κολιβρίου το λεπτό;", answer: "Πάνω από 1.200", category: "Ζώα & Φύση" },
-    { question: "Ποια πόλη χτίστηκε πάνω σε 14 νησιά;", answer: "Η Στοκχόλμη", category: "Γεωγραφία" },
-    { question: "Τι απαγορεύεται να κάνεις στη Βενετία σύμφωνα με τοπικό νόμο;", answer: "Να ταΐζεις τα περιστέρια", category: "WTF Facts" },
-    { question: "Πόσα αστέρια υπάρχουν στο γαλαξία μας κατά προσέγγιση;", answer: "100-400 δισεκατομμύρια", category: "Επιστήμη" },
-    { question: "Ποιο ποτό ανακαλύφθηκε κατά λάθος από μοναχούς;", answer: "Η σαμπάνια", category: "Φαγητό & Ποτό" },
-    { question: "Σε δημοσκόπηση, τι απάντησαν οι περισσότεροι ότι φοβούνται περισσότερο: τα φίδια ή τις δημόσιες ομιλίες;", answer: "Τις δημόσιες ομιλίες", category: "Περίεργα Στατιστικά" },
-    { question: "Ποιο μέρος του σώματος συνεχίζει να μεγαλώνει σε όλη τη ζωή μας;", answer: "Η μύτη και τα αυτιά", category: "Επιστήμη" },
-    { question: "Ποια χώρα κατανάλωνε τα περισσότερα donuts ανά κάτοικο;", answer: "Ο Καναδάς", category: "Φαγητό & Ποτό" },
-    { question: "Πόσο χρονών ήταν ο νεότερος Ολυμπιονίκης;", answer: "10 ετών (Δημήτριος Λούνδρας, Αθήνα 1896)", category: "Αθλητικά" },
-    { question: "Ποιο είναι το πιο κλεμμένο φαγητό στον κόσμο;", answer: "Το τυρί", category: "WTF Facts" },
-    { question: "Τι ποσοστό του ωκεανού έχει εξερευνηθεί;", answer: "Μόλις 5%", category: "Επιστήμη" },
-    { question: "Ποιος ζωγράφος έκοψε το αυτί του;", answer: "Ο Βαν Γκογκ", category: "Τέχνη & Πολιτισμός" },
-    { question: "Πόσες γλώσσες ομιλούνται στην Παπούα Νέα Γουινέα;", answer: "Πάνω από 800", category: "Γεωγραφία" },
-    { question: "Ποιο ήταν το πρώτο φαγητό που θερμάνθηκε σε φούρνο μικροκυμάτων;", answer: "Ποπ κορν", category: "Φαγητό & Ποτό" },
-    { question: "Σε δημοσκόπηση, ποια μέρα της εβδομάδας θεωρείται η πιο παραγωγική;", answer: "Η Τρίτη", category: "Περίεργα Στατιστικά" },
-    { question: "Ποιο ζώο μπορεί να κοιμηθεί ως 3 χρόνια;", answer: "Το σαλιγκάρι", category: "Ζώα & Φύση" },
-    { question: "Ποιος εφηύρε το ψαλίδι;", answer: "Ο Λεονάρντο ντα Βίντσι", category: "Ιστορία" },
-    { question: "Τι ποσοστό των ανθρώπων σε έρευνα δήλωσε ότι μιλάει στο κατοικίδιό του;", answer: "Πάνω από 80%", category: "Περίεργα Στατιστικά" },
-  ],
-  // Set 2 (30 more questions)
-  [
-    { question: "Πόσα λίτρα σάλιο παράγει ένας άνθρωπος στη ζωή του;", answer: "Περίπου 35.000 λίτρα", category: "Επιστήμη" },
-    { question: "Ποιο ζώο δεν μπορεί να κάνει εμετό;", answer: "Τα κουνέλια", category: "Ζώα & Φύση" },
-    { question: "Ποια ομάδα κέρδισε το πρώτο Παγκόσμιο Κύπελλο ποδοσφαίρου;", answer: "Η Ουρουγουάη (1930)", category: "Αθλητικά" },
-    { question: "Ποιο χρώμα δεν υπάρχει στις σημαίες κανενός κράτους;", answer: "Το μωβ", category: "Περίεργα Στατιστικά" },
-    { question: "Πόσο ζυγίζει κατά μέσο όρο ένα σύννεφο;", answer: "Περίπου 500 τόνους", category: "Επιστήμη" },
-    { question: "Ποια ελληνική λέξη χρησιμοποιείται παγκοσμίως χωρίς μετάφραση;", answer: "Ευρήκα (ή Μούσα, Νέμεσις κ.λπ.)", category: "Τέχνη & Πολιτισμός" },
-    { question: "Σε ποια χώρα ήταν παράνομο να μασάς τσίχλα μέχρι πρόσφατα;", answer: "Σιγκαπούρη", category: "WTF Facts" },
-    { question: "Πόσα ποδήλατα βρίσκονται στον πάτο των καναλιών του Άμστερνταμ;", answer: "Περίπου 15.000 τον χρόνο", category: "WTF Facts" },
-    { question: "Ποιο φρούτο μπορεί να ωριμάσει μπανάνες πιο γρήγορα αν τα βάλεις δίπλα;", answer: "Το μήλο", category: "Φαγητό & Ποτό" },
-    { question: "Πόσες φορές τη μέρα γελάει ένα παιδί κατά μέσο όρο;", answer: "Περίπου 300 (ενώ ενήλικας μόνο 15-20)", category: "Περίεργα Στατιστικά" },
-    { question: "Ποιος πλανήτης στο ηλιακό μας σύστημα περιστρέφεται ανάποδα;", answer: "Η Αφροδίτη", category: "Επιστήμη" },
-    { question: "Ποιο ήταν το πιο σύντομο πόλεμο στην ιστορία;", answer: "Ο πόλεμος Αγγλίας-Ζανζιβάρης (38-45 λεπτά)", category: "Ιστορία" },
-    { question: "Τι ποσοστό της γης καλύπτεται από νερό;", answer: "Περίπου 71%", category: "Γεωγραφία" },
-    { question: "Ποιο είναι το δημοφιλέστερο κατοικίδιο στην Ελλάδα;", answer: "Η γάτα", category: "Ζώα & Φύση" },
-    { question: "Πόσες ώρες κοιμάται ένα κοάλα την ημέρα;", answer: "18-22 ώρες", category: "Ζώα & Φύση" },
-    { question: "Ποιο φαγητό αντέχει χιλιάδες χρόνια χωρίς να χαλάσει;", answer: "Το μέλι", category: "Φαγητό & Ποτό" },
-    { question: "Ποια πόλη ονομάζεται 'η πόλη που δεν κοιμάται ποτέ';", answer: "Η Νέα Υόρκη", category: "Γεωγραφία" },
-    { question: "Ποιο σπορ παίζεται στο φεγγάρι;", answer: "Γκολφ (ο Άλαν Σέπαρντ έπαιξε το 1971)", category: "Αθλητικά" },
-    { question: "Σε δημοσκόπηση, τι φοβούνται οι περισσότεροι περισσότερο στο αεροπλάνο;", answer: "Τις αναταράξεις (όχι τη συντριβή)", category: "Περίεργα Στατιστικά" },
-    { question: "Ποια ήταν η πρώτη χώρα που έδωσε δικαίωμα ψήφου στις γυναίκες;", answer: "Η Νέα Ζηλανδία (1893)", category: "Ιστορία" },
-    { question: "Πόσα εκατομμύρια βακτήρια ζουν σε ένα τετραγωνικό εκατοστό δέρματος;", answer: "Περίπου 6 εκατομμύρια", category: "Επιστήμη" },
-    { question: "Ποιο είναι το αρχαιότερο εστιατόριο στον κόσμο;", answer: "Το Sobrino de Botín στη Μαδρίτη (από το 1725)", category: "Φαγητό & Ποτό" },
-    { question: "Σε ποια χώρα υπάρχει νόμος που απαγορεύει να πεθάνεις στο κοινοβούλιο;", answer: "Αγγλία", category: "WTF Facts" },
-    { question: "Ποιο ήταν το πρώτο βιντεοπαιχνίδι που παίχτηκε στο διάστημα;", answer: "Tetris", category: "Διασκέδαση" },
-    { question: "Πόσα δέντρα κόβονται κάθε μέρα παγκοσμίως;", answer: "Περίπου 3,5 εκατομμύρια", category: "Ζώα & Φύση" },
-    { question: "Ποιο τραγούδι ήταν το πρώτο που παίχτηκε στον Άρη;", answer: "\"Reach for the Stars\" - will.i.am (2012)", category: "Διασκέδαση" },
-    { question: "Σε ποιο ελληνικό νησί απαγορεύονται τα ψηλοτάκουνα σε αρχαιολογικούς χώρους;", answer: "Σε όλη την Ελλάδα (νόμος 2009)", category: "WTF Facts" },
-    { question: "Πόσες μυρωδιές μπορεί να αναγνωρίσει η ανθρώπινη μύτη;", answer: "Πάνω από 1 τρισεκατομμύριο", category: "Επιστήμη" },
-    { question: "Ποια χώρα έχει τις περισσότερες αργίες στον κόσμο;", answer: "Η Ινδία (με πάνω από 30)", category: "Περίεργα Στατιστικά" },
-    { question: "Ποιο είναι το μακρύτερο ελληνικό τοπωνύμιο;", answer: "Παναγία Φανερωμένη Μηχανιώνας (ή παρόμοια μακρά ονομασία)", category: "Τέχνη & Πολιτισμός" },
-  ],
-];
+async function generateQuestionsWithGemini(existingQuestions) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured');
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+  const existingList = existingQuestions.length > 0
+    ? `\n\nΗΔΗ ΥΠΑΡΧΟΥΝ αυτές οι ερωτήσεις στη βάση (ΜΗΝ τις επαναλάβεις):\n${existingQuestions.map(q => `- ${q.question_text}`).join('\n')}`
+    : '';
+
+  const prompt = `Δημιούργησε ακριβώς 30 ερωτήσεις trivia στα Ελληνικά. Κάθε ερώτηση πρέπει να είναι ένα ενδιαφέρον, αστείο ή εκπληκτικό fact. Μπορεί να είναι του τύπου "Τι ψήφισαν οι περισσότεροι σε δημοσκόπηση", "Ποιο ζώο...", "Πόσοι...", κλπ.
+
+Κατηγορίες (χρησιμοποίησε ΜΟΝΟ αυτές, μοίρασέ τες ομοιόμορφα):
+${CATEGORIES.join(', ')}
+
+Η απάντηση πρέπει να είναι σύντομη (1-10 λέξεις) και μπορεί να περιλαμβάνει μια παρένθεση με extra πληροφορία.
+
+ΣΗΜΑΝΤΙΚΟ: Απάντησε ΜΟΝΟ με valid JSON array, χωρίς markdown, χωρίς backticks, χωρίς τίποτα άλλο. Μόνο το JSON.
+
+Format:
+[{"question":"...","answer":"...","category":"..."},...]${existingList}`;
+
+  const result = await model.generateContent(prompt);
+  const text = result.response.text().trim();
+
+  // Clean up potential markdown code fences
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  const questions = JSON.parse(cleaned);
+
+  if (!Array.isArray(questions) || questions.length === 0) {
+    throw new Error('AI returned invalid format');
+  }
+
+  // Validate and filter
+  return questions
+    .filter(q => q.question && q.answer && q.category)
+    .map(q => ({
+      question: q.question,
+      answer: q.answer,
+      category: CATEGORIES.includes(q.category) ? q.category : null,
+    }))
+    .slice(0, 30);
+}
 
 module.exports = function (pool) {
   // GET /api/questions/categories - get fixed category list
@@ -143,33 +122,34 @@ module.exports = function (pool) {
     }
   });
 
-  // POST /api/questions/seed - seed next batch of questions (admin only)
+  // POST /api/questions/seed - generate 30 new questions with AI (admin only)
   router.post('/seed', authenticateToken, requireAdmin, async (req, res) => {
     try {
-      let totalInserted = 0;
+      // Get existing questions to avoid duplicates
+      const existing = await pool.query('SELECT question_text FROM questions');
+      const existingTexts = new Set(existing.rows.map(r => r.question_text));
 
-      for (const seedSet of SEED_SETS) {
-        for (const q of seedSet) {
-          const existing = await pool.query(
-            'SELECT id FROM questions WHERE question_text = $1',
-            [q.question]
+      // Generate with Gemini
+      const generated = await generateQuestionsWithGemini(existing.rows);
+
+      let inserted = 0;
+      for (const q of generated) {
+        if (!existingTexts.has(q.question)) {
+          await pool.query(
+            'INSERT INTO questions (question_text, correct_answer, category, created_by) VALUES ($1, $2, $3, $4)',
+            [q.question, q.answer, q.category, req.user.id]
           );
-          if (existing.rows.length === 0) {
-            await pool.query(
-              'INSERT INTO questions (question_text, correct_answer, category, created_by) VALUES ($1, $2, $3, $4)',
-              [q.question, q.answer, q.category, req.user.id]
-            );
-            totalInserted++;
-          }
+          inserted++;
+          existingTexts.add(q.question);
         }
       }
 
-      const total = SEED_SETS.reduce((sum, set) => sum + set.length, 0);
       res.json({
         success: true,
-        message: `Προστέθηκαν ${totalInserted} νέες ερωτήσεις (${total - totalInserted} υπήρχαν ήδη)`,
+        message: `Δημιουργήθηκαν ${inserted} νέες ερωτήσεις με AI (${generated.length - inserted} ήταν διπλότυπες)`,
       });
     } catch (err) {
+      console.error('Seed error:', err);
       res.status(500).json({ success: false, error: err.message });
     }
   });
