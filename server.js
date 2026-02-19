@@ -45,6 +45,10 @@ app.use(cors({
 
 app.use(express.json());
 
+// Auth routes
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', authRoutes(pool));
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -84,6 +88,25 @@ app.post('/api/init-db', async (req, res) => {
       )
     `);
     res.json({ success: true, message: 'Database initialized' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Initialize users table
+app.post('/api/init-users', async (req, res) => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        display_name VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+    res.json({ success: true, message: 'Users table initialized' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
