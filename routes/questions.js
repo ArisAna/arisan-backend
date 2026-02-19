@@ -26,7 +26,7 @@ async function generateQuestionsWithGemini(existingQuestions) {
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const existingList = existingQuestions.length > 0
     ? `\n\nΗΔΗ ΥΠΑΡΧΟΥΝ αυτές οι ερωτήσεις στη βάση (ΜΗΝ τις επαναλάβεις):\n${existingQuestions.map(q => `- ${q.question_text}`).join('\n')}`
