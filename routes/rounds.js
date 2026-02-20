@@ -137,10 +137,17 @@ module.exports = function (pool, io) {
     } else if (round.status === 'results') {
       const r = await pool.query(
         `SELECT ra.id, ra.user_id, ra.answer_text, ra.is_correct, ra.votes_received,
-                u.display_name
+                u.display_name,
+                COALESCE(
+                  json_agg(vu.display_name ORDER BY rv.id) FILTER (WHERE rv.id IS NOT NULL),
+                  '[]'
+                ) AS voters
          FROM round_answers ra
          LEFT JOIN users u ON ra.user_id = u.id
+         LEFT JOIN round_votes rv ON rv.answer_id = ra.id
+         LEFT JOIN users vu ON vu.id = rv.voter_id
          WHERE ra.round_id = $1
+         GROUP BY ra.id, ra.user_id, ra.answer_text, ra.is_correct, ra.votes_received, u.display_name
          ORDER BY ra.votes_received DESC, ra.is_correct DESC`,
         [round.id]
       );
