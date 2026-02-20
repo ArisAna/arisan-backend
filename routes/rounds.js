@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const { generateQuestionsWithGemini, CATEGORIES } = require('../utils/generateQuestions');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 module.exports = function (pool, io) {
   const router = express.Router({ mergeParams: true });
@@ -262,6 +263,35 @@ module.exports = function (pool, io) {
     } catch (err) {
       console.error('Seed error:', err);
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // POST /api/games/:gameId/spell-check
+  router.post('/spell-check', authenticateToken, async (req, res) => {
+    const { text } = req.body;
+    if (!text?.trim() || text.trim().length < 3) {
+      return res.json({ success: true, suggestion: null });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.json({ success: true, suggestion: null });
+
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+      const prompt = `Διόρθωσε μόνο την ορθογραφία και γραμματική αυτής της ελληνικής φράσης. Μην αλλάξεις το νόημα. Επέστρεψε ΜΟΝΟ την διορθωμένη φράση, χωρίς εισαγωγικά, χωρίς εξηγήσεις. Αν δεν υπάρχει λάθος, επέστρεψε ακριβώς την ίδια φράση:\n${text.trim()}`;
+
+      const result = await model.generateContent(prompt);
+      const suggestion = result.response.text().trim().replace(/^["«»""']|["«»""']$/g, '');
+
+      if (!suggestion || suggestion.toLowerCase() === text.trim().toLowerCase()) {
+        return res.json({ success: true, suggestion: null });
+      }
+
+      res.json({ success: true, suggestion });
+    } catch {
+      res.json({ success: true, suggestion: null });
     }
   });
 
