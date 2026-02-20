@@ -92,11 +92,14 @@ module.exports = function (pool, io) {
     // Answers — content depends on phase
     let answers = [];
     if (round.status === 'voting') {
-      // Anonymized, no is_correct flag, deterministically shuffled
+      // Anonymized, deduplicated by answer_text, excludes player correct-guesses,
+      // deterministically shuffled
       const r = await pool.query(
-        `SELECT id, answer_text FROM round_answers
+        `SELECT MIN(id) as id, answer_text FROM round_answers
          WHERE round_id = $1
-         ORDER BY md5($1::text || id::text)`,
+           AND NOT (user_id IS NOT NULL AND is_correct = TRUE)
+         GROUP BY answer_text
+         ORDER BY md5($1::text || MIN(id)::text)`,
         [round.id]
       );
       answers = r.rows;
@@ -318,12 +321,30 @@ module.exports = function (pool, io) {
         return res.status(400).json({ error: 'Question master cannot answer' });
       }
 
+      const trimmed = answer_text.trim();
+
+      // Check if player's answer matches the correct answer (case-insensitive)
+      const correctRes = await pool.query(
+        `SELECT answer_text FROM round_answers WHERE round_id = $1 AND user_id IS NULL AND is_correct = TRUE`,
+        [round.id]
+      );
+      const correctText = correctRes.rows[0]?.answer_text?.trim().toLowerCase() || '';
+      const isCorrectGuess = correctText && trimmed.toLowerCase() === correctText;
+
       await pool.query(
         `INSERT INTO round_answers (round_id, user_id, answer_text, is_correct)
-         VALUES ($1, $2, $3, FALSE)
-         ON CONFLICT (round_id, user_id) DO UPDATE SET answer_text = EXCLUDED.answer_text`,
-        [round.id, req.user.id, answer_text.trim()]
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (round_id, user_id) DO UPDATE SET answer_text = EXCLUDED.answer_text, is_correct = EXCLUDED.is_correct`,
+        [round.id, req.user.id, trimmed, isCorrectGuess]
       );
+
+      // Award 3 pts immediately for guessing correctly — answer excluded from voting pool
+      if (isCorrectGuess) {
+        await pool.query(
+          `UPDATE game_players SET score = score + 3 WHERE game_id = $1 AND user_id = $2`,
+          [gameId, req.user.id]
+        );
+      }
 
       const playerCount = await pool.query(
         `SELECT COUNT(*)::int as c FROM game_players WHERE game_id = $1`, [gameId]
@@ -449,7 +470,7 @@ module.exports = function (pool, io) {
 };
 
 async function calculateAndAwardPoints(roundId, gameId, questionMasterId, pool) {
-  // Update votes_received counts
+  // Update votes_received on the answers that actually received votes
   await pool.query(
     `UPDATE round_answers ra
      SET votes_received = (SELECT COUNT(*)::int FROM round_votes rv WHERE rv.answer_id = ra.id)
@@ -457,8 +478,28 @@ async function calculateAndAwardPoints(roundId, gameId, questionMasterId, pool) 
     [roundId]
   );
 
+  // Propagate votes_received to duplicate answers (same text, different player):
+  // During voting we show MIN(id) per answer_text; the duplicate rows have votes_received=0.
+  // Copy the max votes_received within each answer_text group to all rows of that group.
+  await pool.query(
+    `UPDATE round_answers ra
+     SET votes_received = sub.max_votes
+     FROM (
+       SELECT answer_text, MAX(votes_received) as max_votes
+       FROM round_answers
+       WHERE round_id = $1 AND user_id IS NOT NULL AND is_correct = FALSE
+       GROUP BY answer_text
+     ) sub
+     WHERE ra.round_id = $1
+       AND ra.user_id IS NOT NULL
+       AND ra.is_correct = FALSE
+       AND ra.answer_text = sub.answer_text`,
+    [roundId]
+  );
+
+  // The actual correct answer has user_id IS NULL
   const correctAnswerRes = await pool.query(
-    `SELECT id FROM round_answers WHERE round_id = $1 AND is_correct = TRUE`, [roundId]
+    `SELECT id FROM round_answers WHERE round_id = $1 AND is_correct = TRUE AND user_id IS NULL`, [roundId]
   );
   const correctAnswerId = correctAnswerRes.rows[0]?.id;
 
