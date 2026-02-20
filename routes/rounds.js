@@ -172,6 +172,13 @@ module.exports = function (pool, io) {
       const result = await pool.query(
         `SELECT id, question_text, correct_answer, category FROM questions
          WHERE id NOT IN (SELECT question_id FROM rounds WHERE game_id = $1)
+         AND id NOT IN (
+           SELECT DISTINCT r.question_id
+           FROM rounds r
+           JOIN game_players gp ON gp.game_id = r.game_id
+           WHERE gp.user_id IN (SELECT user_id FROM game_players WHERE game_id = $1)
+             AND r.status = 'results'
+         )
          ${categoryClause}${excludeClause}
          ORDER BY created_at DESC LIMIT 6`,
         params
