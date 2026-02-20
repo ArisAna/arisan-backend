@@ -167,6 +167,94 @@ module.exports = function (pool, io) {
     io.to(`game:${gameId}`).emit('reload_round');
   }
 
+  // GET /api/games/:gameId/breakdown — per-player scoring breakdown for final results
+  router.get('/breakdown', authenticateToken, async (req, res) => {
+    try {
+      const { gameId } = req.params;
+
+      // Must be a participant or admin
+      const inGame = await pool.query(
+        `SELECT 1 FROM game_players WHERE game_id = $1 AND user_id = $2`,
+        [gameId, req.user.id]
+      );
+      if (!inGame.rows.length && !req.user.is_admin) {
+        return res.status(403).json({ error: 'Not in this game' });
+      }
+
+      const players = await pool.query(
+        `SELECT gp.user_id, u.display_name, gp.score
+         FROM game_players gp JOIN users u ON gp.user_id = u.id
+         WHERE gp.game_id = $1 ORDER BY gp.score DESC`,
+        [gameId]
+      );
+
+      // Correct guesses: player submitted the exact correct answer during answering phase
+      const correctGuesses = await pool.query(
+        `SELECT ra.user_id, COUNT(*)::int AS count
+         FROM round_answers ra JOIN rounds r ON ra.round_id = r.id
+         WHERE r.game_id = $1 AND ra.user_id IS NOT NULL AND ra.is_correct = TRUE
+         GROUP BY ra.user_id`,
+        [gameId]
+      );
+
+      // Correct votes: player voted for the real answer (user_id IS NULL row)
+      const correctVotes = await pool.query(
+        `SELECT rv.voter_id AS user_id, COUNT(*)::int AS count
+         FROM round_votes rv
+         JOIN rounds r ON rv.round_id = r.id
+         JOIN round_answers ra ON rv.answer_id = ra.id
+         WHERE r.game_id = $1 AND ra.is_correct = TRUE AND ra.user_id IS NULL
+         GROUP BY rv.voter_id`,
+        [gameId]
+      );
+
+      // Bluff votes: total votes other players cast on this player's fake answer
+      const bluffVotes = await pool.query(
+        `SELECT ra.user_id, SUM(ra.votes_received)::int AS count
+         FROM round_answers ra JOIN rounds r ON ra.round_id = r.id
+         WHERE r.game_id = $1
+           AND ra.user_id IS NOT NULL
+           AND ra.is_correct = FALSE
+           AND ra.votes_received > 0
+         GROUP BY ra.user_id`,
+        [gameId]
+      );
+
+      // QM bonus: rounds where this player was QM and nobody found the correct answer
+      const qmBonuses = await pool.query(
+        `SELECT r.question_master_id AS user_id, COUNT(*)::int AS count
+         FROM rounds r
+         WHERE r.game_id = $1 AND r.status = 'results'
+           AND NOT EXISTS (
+             SELECT 1 FROM round_votes rv
+             JOIN round_answers ra ON rv.answer_id = ra.id
+             WHERE rv.round_id = r.id AND ra.is_correct = TRUE AND ra.user_id IS NULL
+           )
+         GROUP BY r.question_master_id`,
+        [gameId]
+      );
+
+      const cg = Object.fromEntries(correctGuesses.rows.map(r => [r.user_id, r.count]));
+      const cv = Object.fromEntries(correctVotes.rows.map(r => [r.user_id, r.count]));
+      const bv = Object.fromEntries(bluffVotes.rows.map(r => [r.user_id, r.count]));
+      const qb = Object.fromEntries(qmBonuses.rows.map(r => [r.user_id, r.count]));
+
+      const breakdown = players.rows.map(p => ({
+        user_id: p.user_id,
+        display_name: p.display_name,
+        score: p.score,
+        correct_guesses: cg[p.user_id] || 0,
+        correct_votes: cv[p.user_id] || 0,
+        bluff_votes: bv[p.user_id] || 0,
+        qm_bonuses: qb[p.user_id] || 0,
+      }));
+
+      res.json({ success: true, breakdown });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // GET /api/games/:gameId/round
   router.get('/round', authenticateToken, async (req, res) => {
     try {
