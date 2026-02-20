@@ -1,5 +1,6 @@
 const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
+const { generateQuestionsWithGemini, CATEGORIES } = require('../utils/generateQuestions');
 
 module.exports = function (pool, io) {
   const router = express.Router({ mergeParams: true });
@@ -141,18 +142,103 @@ module.exports = function (pool, io) {
     }
   });
 
-  // GET /api/games/:gameId/available-questions
+  // GET /api/games/:gameId/available-questions?category=X
   router.get('/available-questions', authenticateToken, async (req, res) => {
     try {
       const { gameId } = req.params;
+      const { category } = req.query;
+
+      const params = [gameId];
+      let categoryClause = '';
+      if (category) {
+        params.push(category);
+        categoryClause = ` AND category = $${params.length}`;
+      }
+
       const result = await pool.query(
-        `SELECT id, question_text, category FROM questions
-         WHERE id NOT IN (SELECT question_id FROM rounds WHERE game_id = $1)
+        `SELECT id, question_text, correct_answer, category FROM questions
+         WHERE id NOT IN (SELECT question_id FROM rounds WHERE game_id = $1)${categoryClause}
          ORDER BY RANDOM() LIMIT 6`,
-        [gameId]
+        params
       );
-      res.json({ success: true, questions: result.rows });
+      res.json({ success: true, questions: result.rows, categories: CATEGORIES });
     } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // PUT /api/games/:gameId/edit-question/:questionId — QM edits question/answer
+  router.put('/edit-question/:questionId', authenticateToken, async (req, res) => {
+    try {
+      const { gameId, questionId } = req.params;
+      const { question_text, correct_answer } = req.body;
+
+      if (!question_text?.trim() && !correct_answer?.trim()) {
+        return res.status(400).json({ error: 'Nothing to update' });
+      }
+
+      // Verify user is the current QM
+      const gameRes = await pool.query(`SELECT current_round FROM games WHERE id = $1`, [gameId]);
+      if (!gameRes.rows.length) return res.status(404).json({ error: 'Game not found' });
+
+      const players = await pool.query(
+        `SELECT user_id FROM game_players WHERE game_id = $1 ORDER BY turn_order`, [gameId]
+      );
+      const qmId = players.rows[(gameRes.rows[0].current_round - 1) % players.rows.length]?.user_id;
+      if (req.user.id !== qmId && !req.user.is_admin) {
+        return res.status(403).json({ error: 'Only the Question Master can edit questions during the game' });
+      }
+
+      const result = await pool.query(
+        `UPDATE questions
+         SET question_text = COALESCE(NULLIF($1, ''), question_text),
+             correct_answer = COALESCE(NULLIF($2, ''), correct_answer)
+         WHERE id = $3 RETURNING id, question_text, correct_answer, category`,
+        [question_text?.trim() || '', correct_answer?.trim() || '', questionId]
+      );
+
+      if (!result.rows.length) return res.status(404).json({ error: 'Question not found' });
+      res.json({ success: true, question: result.rows[0] });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // POST /api/games/:gameId/seed-questions — QM generates 30 more questions with AI
+  router.post('/seed-questions', authenticateToken, async (req, res) => {
+    try {
+      const { gameId } = req.params;
+
+      // Verify user is in this game
+      const inGame = await pool.query(
+        `SELECT 1 FROM game_players WHERE game_id = $1 AND user_id = $2`,
+        [gameId, req.user.id]
+      );
+      if (!inGame.rows.length) return res.status(403).json({ error: 'You are not in this game' });
+
+      const existing = await pool.query('SELECT question_text FROM questions');
+      const existingTexts = new Set(existing.rows.map(r => r.question_text));
+
+      const generated = await generateQuestionsWithGemini(existing.rows);
+
+      let inserted = 0;
+      for (const q of generated) {
+        if (!existingTexts.has(q.question)) {
+          await pool.query(
+            'INSERT INTO questions (question_text, correct_answer, category, created_by) VALUES ($1, $2, $3, $4)',
+            [q.question, q.answer, q.category, req.user.id]
+          );
+          inserted++;
+          existingTexts.add(q.question);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Δημιουργήθηκαν ${inserted} νέες ερωτήσεις με AI`,
+      });
+    } catch (err) {
+      console.error('Seed error:', err);
       res.status(500).json({ success: false, error: err.message });
     }
   });
