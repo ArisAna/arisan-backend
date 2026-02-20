@@ -123,5 +123,25 @@ module.exports = function (pool) {
     });
   });
 
+  // GET /api/auth/stats
+  router.get('/stats', authenticateToken, async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT
+           COUNT(*)::int AS games_played,
+           COUNT(*) FILTER (WHERE gp.score = (
+             SELECT MAX(score) FROM game_players WHERE game_id = gp.game_id
+           ))::int AS wins
+         FROM game_players gp
+         JOIN games g ON g.id = gp.game_id
+         WHERE gp.user_id = $1 AND g.status = 'finished'`,
+        [req.user.id]
+      );
+      res.json({ success: true, stats: result.rows[0] });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   return router;
 };
