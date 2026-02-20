@@ -66,12 +66,24 @@ io.use((socket, next) => {
   }
 });
 
+// Active session tracking (in-memory): userId → { displayName, socketIds: Set, connectedAt, currentGame }
+const connectedSessions = new Map();
+
 io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.user.display_name} (${socket.user.id})`);
+  const userId = socket.user.id;
+  const displayName = socket.user.display_name;
+  console.log(`Socket connected: ${displayName} (${userId})`);
+
+  // Track session
+  if (!connectedSessions.has(userId)) {
+    connectedSessions.set(userId, { displayName, socketIds: new Set(), connectedAt: new Date(), currentGame: null });
+  }
+  connectedSessions.get(userId).socketIds.add(socket.id);
 
   // Join lobby room to get game list updates
   socket.on('join_lobby', () => {
     socket.join('lobby');
+    if (connectedSessions.has(userId)) connectedSessions.get(userId).currentGame = null;
   });
 
   socket.on('leave_lobby', () => {
@@ -81,14 +93,24 @@ io.on('connection', (socket) => {
   // Join specific game room
   socket.on('join_game_room', (gameId) => {
     socket.join(`game:${gameId}`);
+    if (connectedSessions.has(userId)) connectedSessions.get(userId).currentGame = gameId;
   });
 
   socket.on('leave_game_room', (gameId) => {
     socket.leave(`game:${gameId}`);
+    if (connectedSessions.has(userId)) {
+      const session = connectedSessions.get(userId);
+      if (String(session.currentGame) === String(gameId)) session.currentGame = null;
+    }
   });
 
   socket.on('disconnect', () => {
-    console.log(`Socket disconnected: ${socket.user.display_name}`);
+    console.log(`Socket disconnected: ${displayName}`);
+    const session = connectedSessions.get(userId);
+    if (session) {
+      session.socketIds.delete(socket.id);
+      if (session.socketIds.size === 0) connectedSessions.delete(userId);
+    }
   });
 });
 
@@ -103,7 +125,7 @@ const roundRoutes = require('./routes/rounds');
 app.use('/api/auth', authRoutes(pool));
 app.use('/api/migrate', migrateRoutes(pool));
 app.use('/api/questions', questionRoutes(pool));
-app.use('/api/admin', adminRoutes(pool));
+app.use('/api/admin', adminRoutes(pool, connectedSessions, io));
 app.use('/api/games', gameRoutes(pool, io));
 app.use('/api/games/:gameId', roundRoutes(pool, io));
 
