@@ -73,7 +73,7 @@ module.exports = function (pool, io) {
   router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     try {
       const result = await pool.query(
-        `INSERT INTO games (created_by, status) VALUES ($1, 'lobby') RETURNING id`,
+        `INSERT INTO games (created_by, status, total_rounds) VALUES ($1, 'lobby', 0) RETURNING id`,
         [req.user.id]
       );
       const gameId = result.rows[0].id;
@@ -191,8 +191,8 @@ module.exports = function (pool, io) {
       }
 
       await pool.query(
-        `UPDATE games SET status = 'in_progress', started_at = NOW(), current_round = 1 WHERE id = $1`,
-        [req.params.id]
+        `UPDATE games SET status = 'in_progress', started_at = NOW(), current_round = 1, total_rounds = $2 WHERE id = $1`,
+        [req.params.id, playerCount.rows[0].count]
       );
 
       const updatedGame = await getGame(req.params.id);
