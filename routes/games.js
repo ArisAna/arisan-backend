@@ -186,8 +186,8 @@ module.exports = function (pool, io) {
         `SELECT COUNT(*)::int AS count FROM game_players WHERE game_id = $1`,
         [req.params.id]
       );
-      if (playerCount.rows[0].count < 2) {
-        return res.status(400).json({ success: false, error: 'Need at least 2 players to start' });
+      if (playerCount.rows[0].count < 3) {
+        return res.status(400).json({ success: false, error: 'Need at least 3 players to start' });
       }
 
       await pool.query(
