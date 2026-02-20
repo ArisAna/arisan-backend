@@ -393,23 +393,45 @@ module.exports = function (pool, io) {
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.json({ success: true, suggestion: null });
+    if (!apiKey) {
+      console.warn('Spell-check: GEMINI_API_KEY not set');
+      return res.json({ success: true, suggestion: null });
+    }
+
+    const inputText = text.trim();
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-      const prompt = `Διόρθωσε μόνο την ορθογραφία και γραμματική αυτής της ελληνικής φράσης. Μην αλλάξεις το νόημα. Επέστρεψε ΜΟΝΟ την διορθωμένη φράση, χωρίς εισαγωγικά, χωρίς εξηγήσεις. Αν δεν υπάρχει λάθος, επέστρεψε ακριβώς την ίδια φράση:\n${text.trim()}`;
+      // English instructions perform more reliably for this type of task.
+      // Key focus: add missing tonos (accent marks) — the most common Greek mobile typing error.
+      const prompt = `You are a Greek spell checker. The input is a short Greek phrase (a trivia game answer). Your task:
+1. Add any missing accent marks (tonos) — e.g. "αθηνα" → "Αθήνα", "ελεφαντας" → "ελέφαντας"
+2. Fix obvious spelling mistakes (wrong letters, typos)
+3. Do NOT change the meaning or add/remove words
+4. Return ONLY the corrected text, nothing else — no quotes, no explanation, no punctuation added
+
+Input: ${inputText}`;
 
       const result = await model.generateContent(prompt);
-      const suggestion = result.response.text().trim().replace(/^["«»""']|["«»""']$/g, '');
+      const raw = result.response.text().trim();
 
-      if (!suggestion || suggestion.toLowerCase() === text.trim().toLowerCase()) {
+      // Strip any stray quote characters the model might add
+      const suggestion = raw.replace(/^["«»""'`]+|["«»""'`]+$/g, '').trim();
+
+      // Compare using NFC normalization so Greek Unicode variants
+      // (composed ά U+03AC vs decomposed α+U+0301) don't cause false equality
+      const normInput = inputText.normalize('NFC').toLowerCase();
+      const normSuggestion = suggestion.normalize('NFC').toLowerCase();
+
+      if (!suggestion || normSuggestion === normInput) {
         return res.json({ success: true, suggestion: null });
       }
 
       res.json({ success: true, suggestion });
-    } catch {
+    } catch (err) {
+      console.error('Spell-check Gemini error:', err.message);
       res.json({ success: true, suggestion: null });
     }
   });
