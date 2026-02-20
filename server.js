@@ -98,12 +98,14 @@ const migrateRoutes = require('./routes/migrate');
 const questionRoutes = require('./routes/questions');
 const adminRoutes = require('./routes/admin');
 const gameRoutes = require('./routes/games');
+const roundRoutes = require('./routes/rounds');
 
 app.use('/api/auth', authRoutes(pool));
 app.use('/api/migrate', migrateRoutes(pool));
 app.use('/api/questions', questionRoutes(pool));
 app.use('/api/admin', adminRoutes(pool));
 app.use('/api/games', gameRoutes(pool, io));
+app.use('/api/games/:gameId', roundRoutes(pool, io));
 
 // Health check
 app.get('/api/health', (req, res) => {
