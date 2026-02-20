@@ -90,20 +90,50 @@ module.exports = function (pool, io) {
       [round.id]
     );
 
-    // Answers — content depends on phase
+    const isQM = userId === currentQm.user_id;
+
+    // Answers — content depends on phase and whether the viewer is the QM
     let answers = [];
-    if (round.status === 'voting') {
-      // Anonymized, deduplicated by answer_text, excludes player correct-guesses,
-      // deterministically shuffled
-      const r = await pool.query(
-        `SELECT MIN(id) as id, answer_text FROM round_answers
-         WHERE round_id = $1
-           AND NOT (user_id IS NOT NULL AND is_correct = TRUE)
-         GROUP BY answer_text
-         ORDER BY md5($1::text || MIN(id)::text)`,
-        [round.id]
-      );
-      answers = r.rows;
+    if (round.status === 'answering') {
+      if (isQM) {
+        // QM sees who has answered so far with their text (correct-guess highlighted via is_correct)
+        const r = await pool.query(
+          `SELECT ra.id, ra.user_id, ra.answer_text, ra.is_correct,
+                  u.display_name
+           FROM round_answers ra
+           LEFT JOIN users u ON ra.user_id = u.id
+           WHERE ra.round_id = $1 AND ra.user_id IS NOT NULL
+           ORDER BY ra.id`,
+          [round.id]
+        );
+        answers = r.rows;
+      }
+      // regular players see nothing yet — empty array
+    } else if (round.status === 'voting') {
+      if (isQM) {
+        // QM sees deanonymized answers (all player submissions, not the correct-answer row)
+        const r = await pool.query(
+          `SELECT ra.id, ra.user_id, ra.answer_text, ra.is_correct,
+                  u.display_name
+           FROM round_answers ra
+           LEFT JOIN users u ON ra.user_id = u.id
+           WHERE ra.round_id = $1 AND ra.user_id IS NOT NULL
+           ORDER BY ra.id`,
+          [round.id]
+        );
+        answers = r.rows;
+      } else {
+        // Regular players: anonymized, deduplicated, excludes correct-guesses, shuffled
+        const r = await pool.query(
+          `SELECT MIN(id) as id, answer_text FROM round_answers
+           WHERE round_id = $1
+             AND NOT (user_id IS NOT NULL AND is_correct = TRUE)
+           GROUP BY answer_text
+           ORDER BY md5($1::text || MIN(id)::text)`,
+          [round.id]
+        );
+        answers = r.rows;
+      }
     } else if (round.status === 'results') {
       const r = await pool.query(
         `SELECT ra.id, ra.user_id, ra.answer_text, ra.is_correct, ra.votes_received,
@@ -122,7 +152,8 @@ module.exports = function (pool, io) {
       id: round.id,
       status: round.status,
       question_text: round.question_text,
-      correct_answer: round.status === 'results' ? round.correct_answer : undefined,
+      // Correct answer revealed to QM during answering/voting, and to everyone at results
+      correct_answer: (round.status === 'results' || isQM) ? round.correct_answer : undefined,
       answered_count: answeredCount,
       vote_count: voteCountRes.rows[0].count,
       answers,
