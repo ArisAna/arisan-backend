@@ -13,7 +13,7 @@ const CATEGORIES = [
   'WTF Facts',
 ];
 
-async function generateQuestionsWithGemini(existingQuestions) {
+async function generateQuestionsWithGemini(existingQuestions, count = 10) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured');
@@ -26,7 +26,7 @@ async function generateQuestionsWithGemini(existingQuestions) {
     ? `\n\nΗΔΗ ΥΠΑΡΧΟΥΝ αυτές οι ερωτήσεις στη βάση (ΜΗΝ τις επαναλάβεις):\n${existingQuestions.map(q => `- ${q.question_text}`).join('\n')}`
     : '';
 
-  const prompt = `Δημιούργησε ακριβώς 30 ερωτήσεις trivia στα Ελληνικά. Κάθε ερώτηση πρέπει να είναι ένα ενδιαφέρον, αστείο ή εκπληκτικό fact. Μπορεί να είναι του τύπου "Τι ψήφισαν οι περισσότεροι σε δημοσκόπηση", "Ποιο ζώο...", "Πόσοι...", κλπ.
+  const prompt = `Δημιούργησε ακριβώς ${count} ερωτήσεις trivia στα Ελληνικά. Κάθε ερώτηση πρέπει να είναι ένα ενδιαφέρον, αστείο ή εκπληκτικό fact. Μπορεί να είναι του τύπου "Τι ψήφισαν οι περισσότεροι σε δημοσκόπηση", "Ποιο ζώο...", "Πόσοι...", κλπ.
 
 Κατηγορίες (χρησιμοποίησε ΜΟΝΟ αυτές, μοίρασέ τες ομοιόμορφα):
 ${CATEGORIES.join(', ')}
@@ -57,7 +57,7 @@ Format:
       answer: q.answer,
       category: CATEGORIES.includes(q.category) ? q.category : null,
     }))
-    .slice(0, 30);
+    .slice(0, count);
 }
 
 module.exports = { generateQuestionsWithGemini, CATEGORIES };

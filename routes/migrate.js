@@ -100,5 +100,17 @@ module.exports = function (pool) {
     }
   });
 
+  // POST /api/migrate/game-end-conditions — add end condition columns to games
+  router.post('/game-end-conditions', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      await pool.query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS end_mode VARCHAR(20) DEFAULT 'cycles'`);
+      await pool.query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS cycles INT DEFAULT 1`);
+      await pool.query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS target_points INT`);
+      res.json({ success: true, message: 'End condition columns added' });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   return router;
 };

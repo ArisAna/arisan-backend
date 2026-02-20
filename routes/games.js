@@ -8,8 +8,8 @@ module.exports = function (pool, io) {
   // Helper: get full game with players
   async function getGame(gameId) {
     const gameRes = await pool.query(
-      `SELECT g.id, g.status, g.current_round, g.total_rounds, g.created_at, g.started_at,
-              u.display_name AS creator_name, g.created_by
+      `SELECT g.id, g.status, g.current_round, g.total_rounds, g.end_mode, g.cycles, g.target_points,
+              g.created_at, g.started_at, u.display_name AS creator_name, g.created_by
        FROM games g
        JOIN users u ON g.created_by = u.id
        WHERE g.id = $1`,
@@ -74,9 +74,22 @@ module.exports = function (pool, io) {
   // POST /api/games - create game (admin only)
   router.post('/', authenticateToken, requireAdmin, async (req, res) => {
     try {
+      const { end_mode = 'cycles', cycles = 1, target_points } = req.body || {};
+
+      if (end_mode !== 'cycles' && end_mode !== 'points') {
+        return res.status(400).json({ error: 'end_mode must be cycles or points' });
+      }
+      if (end_mode === 'cycles' && (!Number.isInteger(cycles) || cycles < 1 || cycles > 10)) {
+        return res.status(400).json({ error: 'cycles must be between 1 and 10' });
+      }
+      if (end_mode === 'points' && (!Number.isInteger(target_points) || target_points < 5)) {
+        return res.status(400).json({ error: 'target_points must be at least 5' });
+      }
+
       const result = await pool.query(
-        `INSERT INTO games (created_by, status, total_rounds) VALUES ($1, 'lobby', 0) RETURNING id`,
-        [req.user.id]
+        `INSERT INTO games (created_by, status, total_rounds, end_mode, cycles, target_points)
+         VALUES ($1, 'lobby', 0, $2, $3, $4) RETURNING id`,
+        [req.user.id, end_mode, end_mode === 'cycles' ? cycles : 1, end_mode === 'points' ? target_points : null]
       );
       const gameId = result.rows[0].id;
 
@@ -169,7 +182,7 @@ module.exports = function (pool, io) {
   router.post('/:id/start', authenticateToken, async (req, res) => {
     try {
       const gameRes = await pool.query(
-        `SELECT id, status, created_by FROM games WHERE id = $1`,
+        `SELECT id, status, created_by, end_mode, cycles FROM games WHERE id = $1`,
         [req.params.id]
       );
       if (gameRes.rows.length === 0) {
@@ -192,9 +205,13 @@ module.exports = function (pool, io) {
         return res.status(400).json({ success: false, error: 'Need at least 3 players to start' });
       }
 
+      // Calculate total_rounds: cycles mode = cycles * players; points mode = large guard value
+      const pc = playerCount.rows[0].count;
+      const totalRounds = game.end_mode === 'points' ? 9999 : (game.cycles || 1) * pc;
+
       await pool.query(
         `UPDATE games SET status = 'in_progress', started_at = NOW(), current_round = 1, total_rounds = $2 WHERE id = $1`,
-        [req.params.id, playerCount.rows[0].count]
+        [req.params.id, totalRounds]
       );
 
       const updatedGame = await getGame(req.params.id);

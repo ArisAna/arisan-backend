@@ -60,7 +60,7 @@ module.exports = function (pool) {
     }
   });
 
-  // POST /api/questions/seed - generate 30 new questions with AI (admin only)
+  // POST /api/questions/seed - generate 10 new questions with AI (admin only)
   router.post('/seed', authenticateToken, requireAdmin, async (req, res) => {
     try {
       // Get existing questions to avoid duplicates

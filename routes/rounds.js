@@ -8,7 +8,7 @@ module.exports = function (pool, io) {
   // Get personalized round state for this game + user
   async function getRoundState(gameId, userId) {
     const gameRes = await pool.query(
-      `SELECT current_round, total_rounds, status FROM games WHERE id = $1`,
+      `SELECT current_round, total_rounds, status, end_mode, cycles, target_points FROM games WHERE id = $1`,
       [gameId]
     );
     if (!gameRes.rows.length) return null;
@@ -142,11 +142,11 @@ module.exports = function (pool, io) {
     }
   });
 
-  // GET /api/games/:gameId/available-questions?category=X
+  // GET /api/games/:gameId/available-questions?category=X&exclude=1,2,3
   router.get('/available-questions', authenticateToken, async (req, res) => {
     try {
       const { gameId } = req.params;
-      const { category } = req.query;
+      const { category, exclude } = req.query;
 
       const params = [gameId];
       let categoryClause = '';
@@ -155,10 +155,22 @@ module.exports = function (pool, io) {
         categoryClause = ` AND category = $${params.length}`;
       }
 
+      // Exclude already-shown question IDs (for Load More support)
+      let excludeClause = '';
+      if (exclude) {
+        const excludeIds = String(exclude).split(',').map(Number).filter(n => !isNaN(n) && n > 0);
+        if (excludeIds.length > 0) {
+          const placeholders = excludeIds.map((_, i) => `$${params.length + 1 + i}`).join(',');
+          excludeClause = ` AND id NOT IN (${placeholders})`;
+          params.push(...excludeIds);
+        }
+      }
+
       const result = await pool.query(
         `SELECT id, question_text, correct_answer, category FROM questions
-         WHERE id NOT IN (SELECT question_id FROM rounds WHERE game_id = $1)${categoryClause}
-         ORDER BY RANDOM() LIMIT 6`,
+         WHERE id NOT IN (SELECT question_id FROM rounds WHERE game_id = $1)
+         ${categoryClause}${excludeClause}
+         ORDER BY created_at DESC LIMIT 6`,
         params
       );
       res.json({ success: true, questions: result.rows, categories: CATEGORIES });
@@ -204,7 +216,7 @@ module.exports = function (pool, io) {
     }
   });
 
-  // POST /api/games/:gameId/seed-questions — QM generates 30 more questions with AI
+  // POST /api/games/:gameId/seed-questions — any player generates 10 more questions with AI
   router.post('/seed-questions', authenticateToken, async (req, res) => {
     try {
       const { gameId } = req.params;
@@ -219,7 +231,7 @@ module.exports = function (pool, io) {
       const existing = await pool.query('SELECT question_text FROM questions');
       const existingTexts = new Set(existing.rows.map(r => r.question_text));
 
-      const generated = await generateQuestionsWithGemini(existing.rows);
+      const generated = await generateQuestionsWithGemini(existing.rows, 10);
 
       let inserted = 0;
       for (const q of generated) {
@@ -403,7 +415,17 @@ module.exports = function (pool, io) {
         return res.status(403).json({ error: 'Only question master can advance' });
       }
 
-      if (game.current_round >= game.total_rounds) {
+      // Check if game should end (points threshold or last round)
+      let shouldFinish = false;
+      if (game.end_mode === 'points' && game.target_points) {
+        const topScore = await pool.query(
+          `SELECT MAX(score)::int AS max FROM game_players WHERE game_id = $1`, [gameId]
+        );
+        if (topScore.rows[0].max >= game.target_points) shouldFinish = true;
+      }
+      if (!shouldFinish && game.current_round >= game.total_rounds) shouldFinish = true;
+
+      if (shouldFinish) {
         await pool.query(`UPDATE games SET status = 'finished', finished_at = NOW() WHERE id = $1`, [gameId]);
         const scores = await pool.query(
           `SELECT u.display_name, gp.score FROM game_players gp
