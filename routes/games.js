@@ -44,13 +44,15 @@ module.exports = function (pool, io) {
       const result = await pool.query(
         `SELECT g.id, g.status, g.current_round, g.created_at, g.started_at,
                 u.display_name AS creator_name,
-                COUNT(gp.user_id)::int AS player_count
+                COUNT(gp.user_id)::int AS player_count,
+                EXISTS(SELECT 1 FROM game_players WHERE game_id = g.id AND user_id = $1) AS is_player
          FROM games g
          JOIN users u ON g.created_by = u.id
          LEFT JOIN game_players gp ON gp.game_id = g.id
          WHERE g.status IN ('lobby', 'in_progress')
          GROUP BY g.id, u.display_name
-         ORDER BY g.created_at DESC`
+         ORDER BY g.created_at DESC`,
+        [req.user.id]
       );
       res.json({ success: true, games: result.rows });
     } catch (err) {
@@ -199,6 +201,38 @@ module.exports = function (pool, io) {
       io.to(`game:${req.params.id}`).emit('game_started', updatedGame);
       io.to('lobby').emit('lobby_updated');
       res.json({ success: true, game: updatedGame });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // DELETE /api/games/:id - admin deletes a game (cascade)
+  router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Notify players before deleting
+      io.to(`game:${id}`).emit('game_deleted');
+
+      // Cascade delete in dependency order
+      await pool.query(
+        `DELETE FROM round_votes WHERE round_id IN (SELECT id FROM rounds WHERE game_id = $1)`,
+        [id]
+      );
+      await pool.query(
+        `DELETE FROM round_answers WHERE round_id IN (SELECT id FROM rounds WHERE game_id = $1)`,
+        [id]
+      );
+      await pool.query(`DELETE FROM rounds WHERE game_id = $1`, [id]);
+      await pool.query(`DELETE FROM game_players WHERE game_id = $1`, [id]);
+      const result = await pool.query(`DELETE FROM games WHERE id = $1 RETURNING id`, [id]);
+
+      if (!result.rows.length) {
+        return res.status(404).json({ success: false, error: 'Game not found' });
+      }
+
+      io.to('lobby').emit('lobby_updated');
+      res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, error: err.message });
     }
