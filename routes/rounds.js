@@ -402,7 +402,7 @@ module.exports = function (pool, io) {
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
 
       // English instructions perform more reliably for this type of task.
       // Key focus: add missing tonos (accent marks) — the most common Greek mobile typing error.
